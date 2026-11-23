@@ -1,0 +1,179 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.ghostblade.player"
+    android:versionCode="11"
+    android:versionName="0.5.5">
+
+    <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34" />
+
+    <!-- Media access is the app's job; nothing else. NO INTERNET.
+         READ_MEDIA_AUDIO: the music library (API 33+ splits media
+         permissions per type). MODIFY_AUDIO_SETTINGS: the system
+         Equalizer (MX has the same). No location, no network. -->
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+
+    <!-- Foreground playback service (MX PlayService model). Still no
+         INTERNET, no location. FOREGROUND_SERVICE is required since
+         API 28 to start a foreground service at all;
+         FOREGROUND_SERVICE_MEDIA_PLAYBACK is required on API 34
+         (targetSdk 34) for the mediaPlayback service type below.
+         POST_NOTIFICATIONS is the API 33+ runtime grant that makes the
+         service's notification visible; PlayerActivity requests it when
+         background play starts (without the grant the service still
+         runs — Android surfaces it via the task manager instead). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <application
+        android:label="Shadow Player"
+        android:icon="@mipmap/ic_launcher"
+        android:allowBackup="false"
+        android:theme="@android:style/Theme.Material.NoActionBar"
+        android:usesCleartextTraffic="false">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:configChanges="orientation|screenSize|keyboardHidden">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Owned by Shadow Two (PlayerActivity.kt); declared here per SPEC.
+             supportsPictureInPicture + the PiP configChanges set are
+             required by the framework or every PiP attempt is refused
+             (Monitoring v0.2 P1-1).
+             windowLayoutInDisplayCutoutMode="shortEdges" (v0.2.1 fix):
+             without it the system letterboxes the fullscreen player
+             away from the punch-hole camera (black bar on the hole
+             side in landscape — Sir's POCO F5 report). Player-only on
+             purpose: it is the one activity that goes fullscreen;
+             PlayerActivity also sets the same mode programmatically
+             in applyFullscreen(). -->
+        <activity
+            android:name=".PlayerActivity"
+            android:exported="false"
+            android:windowLayoutInDisplayCutoutMode="shortEdges"
+            android:supportsPictureInPicture="true"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden"
+            android:screenOrientation="fullSensor" />
+
+        <!-- Background playback service: keeps the process alive while
+             PlayerActivity plays in the background; owns the playback
+             notification + MediaSession. Declared in PlayerActivity.kt. -->
+        <service
+            android:name=".PlaybackService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+
+        <!-- v0.2 library-side surfaces (Shadow One). -->
+        <activity
+            android:name=".SettingsActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|keyboardHidden" />
+        <activity
+            android:name=".HelpActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|keyboardHidden" />
+        <activity
+            android:name=".RecycleBinActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|keyboardHidden" />
+        <activity
+            android:name=".PrivateFolderActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|keyboardHidden" />
+        <activity
+            android:name=".HistoryActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|keyboardHidden" />
+        <activity
+            android:name=".MusicActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|keyboardHidden" />
+        <activity
+            android:name=".PlaylistDetailActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|keyboardHidden" />
+        <activity
+            android:name=".UsbActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|keyboardHidden" />
+        <activity
+            android:name=".MediaCleanerActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|keyboardHidden" />
+
+        <!-- Video clip editor (spec #107, ClipEditorActivity.kt):
+             range-pick + stream-copy trim, no re-encoding. -->
+        <activity
+            android:name=".ClipEditorActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|keyboardHidden" />
+
+        <!-- Music home-screen widgets (spec #106): four sizes, one
+             provider class each, all in Widgets.kt. The buttons fire
+             real intents (open the music surface / play the stored
+             music queue in the player); there is no playback service
+             for them to remote-control — see Widgets.kt header. -->
+        <receiver
+            android:name=".MusicWidgetSingleRow"
+            android:exported="false"
+            android:label="Shadow Player Music (single row)">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_music_single_row_info" />
+        </receiver>
+        <receiver
+            android:name=".MusicWidgetDoubleRow"
+            android:exported="false"
+            android:label="Shadow Player Music (double row)">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_music_double_row_info" />
+        </receiver>
+        <receiver
+            android:name=".MusicWidgetSquareBig"
+            android:exported="false"
+            android:label="Shadow Player Music (square, big)">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_music_square_big_info" />
+        </receiver>
+        <receiver
+            android:name=".MusicWidgetSquareSmall"
+            android:exported="false"
+            android:label="Shadow Player Music (square, small)">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_music_square_small_info" />
+        </receiver>
+
+        <!-- Framework-only FileProvider replacement for the system
+             share sheet: serves one file per granted intent. -->
+        <provider
+            android:name=".ShareProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="true"
+            android:grantUriPermissions="true" />
+    </application>
+</manifest>

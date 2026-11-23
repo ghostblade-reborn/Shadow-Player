@@ -1,0 +1,7 @@
+*.apk
+*.idsig
+debug.keystore
+build/
+build-test/
+carbon/
+codec-lab/

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Folder glyph, DARK (night) variant — v0.5.2: when the list
+     theme follows the system (the default), Android picks this
+     slate version in system dark mode, matching MX's dark folder
+     look on Sir's screenshots. Same geometry as drawable/ic_folder. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp" android:height="48dp"
+    android:viewportWidth="48" android:viewportHeight="48">
+    <path android:fillColor="#333E4A"
+        android:pathData="M1.9,8.4 C1.9,7.2 3.0,6.2 4.3,6.2 L17.9,6.2 L22.8,10.6 L43.6,10.6 C45.0,10.6 46.1,11.6 46.1,12.8 L46.1,37.4 C46.1,38.6 45.0,39.6 43.6,39.6 L4.3,39.6 C3.0,39.6 1.9,38.6 1.9,37.4 Z" />
+    <path android:fillColor="#414F5E"
+        android:pathData="M1.9,15.1 L46.1,15.1 L46.1,37.4 C46.1,38.6 45.0,39.6 43.6,39.6 L4.3,39.6 C3.0,39.6 1.9,38.6 1.9,37.4 Z" />
+</vector>

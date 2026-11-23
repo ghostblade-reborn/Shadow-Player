@@ -1,0 +1,210 @@
+PASS  folderOfPath basic
+PASS  folderOfPath nested
+PASS  folderOfPath root file
+PASS  folderOfPath no slash
+PASS  group count
+PASS  group order case-insensitive
+PASS  group movies size
+PASS  group keeps incoming order
+PASS  group empty
+PASS  group total duration
+PASS  sort name asc
+PASS  sort name desc
+PASS  sort date desc (newest first)
+PASS  sort date asc
+PASS  sort duration asc
+PASS  sort size desc
+PASS  sort does not mutate input
+PASS  filter blank returns all
+PASS  filter case-insensitive
+PASS  filter substring
+PASS  filter no match
+PASS  fraction half
+PASS  fraction zero duration
+PASS  fraction clamps over 1
+PASS  fraction zero pos
+PASS  fmt zero
+PASS  fmt 59s
+PASS  fmt 60s
+PASS  fmt 12:34
+PASS  fmt 1h
+PASS  fmt 1:23:45
+PASS  fmt sub-second truncates
+PASS  fmt negative clamps
+PASS  fmt remaining
+PASS  fmt remaining over-watched
+PASS  fmt size B
+PASS  fmt size KB
+PASS  fmt size MB
+PASS  fmt size GB
+PASS  fmt size negative
+PASS  fmt resolution
+PASS  fmt resolution unknown
+PASS  resume default 0
+PASS  finished default false
+PASS  resume saved
+PASS  finished after mark
+PASS  markFinished drops position
+PASS  re-watch clears finished
+PASS  re-watch position kept
+PASS  save 0 clears position
+PASS  round-trip loads
+PASS  round-trip position
+PASS  round-trip escaped path
+PASS  round-trip finished
+PASS  round-trip brightness
+PASS  round-trip subtitle size
+PASS  round-trip last folder
+PASS  round-trip stable bytes
+PASS  minimal file loads
+PASS  default brightness
+PASS  default subtitle size
+PASS  default last folder
+PASS  garbage rejected
+PASS  truncated rejected
+PASS  array root rejected
+PASS  positions wrong type rejected
+PASS  finished wrong type rejected
+PASS  state untouched after rejects
+PASS  default resume ask
+PASS  default resume only first
+PASS  default list theme system
+PASS  default playback theme
+PASS  default NEW period 7d
+PASS  default speed 100
+PASS  default sticky pip
+PASS  default colour format
+PASS  default decoder mode
+PASS  default omx local
+PASS  default subtitle scale
+PASS  default respect nomedia
+PASS  default delete subs together
+PASS  default allow edits
+PASS  default floating button
+PASS  playback themes count
+PASS  list themes count
+PASS  omx video codecs count
+PASS  omx audio codecs count
+PASS  shortcuts count
+PASS  video extensions count
+PASS  theme white is light
+PASS  theme black_blueAccent accent
+PASS  theme dark_navy2 page
+PASS  theme dark chrome
+PASS  setting falls back to default
+PASS  setting set/get
+PASS  bool setting
+PASS  int setting
+PASS  set setting
+PASS  list setting
+PASS  settings round-trip loads
+PASS  settings round-trip value
+PASS  settings round-trip set
+PASS  setting back to default reads default
+PASS  resetSettings clears setting
+PASS  resetSettings keeps position
+PASS  last played path
+PASS  last played at
+PASS  history newest first
+PASS  history resume carried
+PASS  clear history empties records
+PASS  clear history keeps settings
+PASS  clear history clears last played
+PASS  search history dedupe+order
+PASS  search history cap 20
+PASS  search history newest first
+PASS  playlist create
+PASS  playlist create duplicate
+PASS  playlist add dedupe count
+PASS  playlist contents
+PASS  playlist remove
+PASS  playlist rename
+PASS  playlist names
+PASS  playlist deleted
+PASS  hidden set
+PASS  favourite set
+PASS  queue order next-first
+PASS  queue cleared
+PASS  file selection
+PASS  bin round-trip loads
+PASS  private entry round-trip
+PASS  private entry path
+PASS  recycle entry round-trip
+PASS  pin hash round-trip
+PASS  private entry removed
+PASS  recycle entry removed
+PASS  sort resolution asc
+PASS  sort framerate desc
+PASS  sort type asc (extension)
+PASS  sort location asc (path)
+PASS  sort status unfinished first
+PASS  sort default keeps order
+PASS  sortModeForField title
+PASS  sortModeForField framerate
+PASS  sortModeForField bogus
+PASS  scan filter folder
+PASS  scan filter extension
+PASS  scan filter dotfiles off
+PASS  visible hides app-hidden
+PASS  visible shows app-hidden when on
+PASS  visible never shows private
+PASS  new tag within period
+PASS  new tag outside period
+PASS  new tag unknown date
+PASS  new tag period off
+PASS  extensionOf
+PASS  extensionOf none
+PASS  dirOfPath
+PASS  rename blank
+PASS  rename separator
+PASS  rename ok
+PASS  rename keeps extension
+PASS  rename explicit extension
+PASS  sidecars found
+PASS  unique name free
+PASS  unique name collision
+PASS  pin hash deterministic
+PASS  pin hash differs
+PASS  pin hash hex length
+PASS  stored name sanitised
+PASS  dateTime zero
+PASS  cleaner dup group count
+PASS  cleaner dup group size
+PASS  cleaner dup keeper first by path
+PASS  cleaner wasted
+PASS  cleaner wasted single
+PASS  cleaner large threshold inclusive
+PASS  cleaner large custom threshold
+PASS  cleaner empty files
+PASS  cleaner empty folders
+PASS  volume root removable
+PASS  volume root primary
+PASS  volume root not app dir
+PASS  tree id primary
+PASS  tree id uuid
+PASS  tree id volume root
+PASS  tree id raw
+PASS  tree id foreign provider
+PASS  video filename match
+PASS  video filename miss
+PASS  wrap next
+PASS  wrap forward end
+PASS  wrap backward start
+PASS  wrap empty queue
+PASS  default last music queue
+PASS  activity import ok
+PASS  activity resume restored
+PASS  activity finished restored
+PASS  activity last played restored
+PASS  activity last-played pointer
+PASS  activity search restored
+PASS  activity playlist restored
+PASS  activity hidden restored
+PASS  activity favourite restored
+PASS  activity selection restored
+PASS  activity queue restored
+PASS  activity leaves settings alone
+PASS  activity malformed rejected
+PASS  activity intact after reject
+----
+208 checks, 0 failures

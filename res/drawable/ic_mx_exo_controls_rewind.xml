@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Redrawn from ICON-CATALOGUE.md verbatim pathData for MX `exo_controls_rewind`
+     (geometry data from the spec; this is our own file - no MX asset copied). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="32.0dp" android:height="32.0dp"
+    android:viewportWidth="24.0" android:viewportHeight="24.0">
+    <path
+        android:fillColor="#ffffffff"
+        android:pathData="M11,18L11,6l-8.5,6 8.5,6zM11.5,12l8.5,6L20,6l-8.5,6z" />
+</vector>

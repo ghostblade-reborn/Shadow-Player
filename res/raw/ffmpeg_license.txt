@@ -1,0 +1,46 @@
+Shadow Player — third-party licenses
+=========================================
+
+FFmpeg
+------
+This application includes libraries from the FFmpeg project
+(https://ffmpeg.org/), version 7.1.1, built from the official
+source tarball (ffmpeg-7.1.1.tar.xz) for Android arm64-v8a:
+
+  libavcodec, libavformat, libavutil, libswresample, libswscale
+
+FFmpeg is free software licensed under the GNU Lesser General Public
+License (LGPL) version 2.1 or later. The build uses no GPL or
+nonfree components: no --enable-gpl, no --enable-nonfree, and no
+external codec libraries — all decoders are FFmpeg-native. Network
+support is compiled out (file access only).
+
+In accordance with the LGPL:
+
+* The FFmpeg libraries are used as shared libraries
+  (lib/arm64-v8a/libav*.so, libsw*.so) and can be replaced with a
+  modified version built from the corresponding source.
+* The exact corresponding source is FFmpeg 7.1.1, available from
+  https://ffmpeg.org/releases/ffmpeg-7.1.1.tar.xz
+* The build is reproducible: it was configured and built with the
+  Android NDK r27c clang using the project build script
+  (codec-lab/build-ffmpeg.sh), with networking, programs, docs,
+  encoders and muxers disabled and the decoder/demuxer set limited
+  to media playback.
+
+A plain-language summary of the LGPL v2.1: you may use, copy and
+redistribute these libraries; if you modify them and distribute the
+result, the modified library source must be made available under
+the same license. Application code linked dynamically against the
+libraries is not itself required to be LGPL-licensed.
+
+The full text of the GNU Lesser General Public License v2.1
+accompanies the FFmpeg source distribution (file COPYING.LGPLv2.1)
+and is available at https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html
+
+-------------------------------------------------------------------
+
+Everything else in this application — the player, the library UI,
+and the gbffmpeg JNI bridge (libgbffmpeg.so) — is original
+GhostBlade code, written for this project. No code or binaries from
+any commercial player are included.

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Redrawn from ICON-CATALOGUE.md verbatim pathData for MX `exo_controls_fastforward`
+     (geometry data from the spec; this is our own file - no MX asset copied). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="32.0dp" android:height="32.0dp"
+    android:viewportWidth="24.0" android:viewportHeight="24.0">
+    <path
+        android:fillColor="#ffffffff"
+        android:pathData="M4,18l8.5,-6L4,6v12zM13,6v12l8.5,-6L13,6z" />
+</vector>

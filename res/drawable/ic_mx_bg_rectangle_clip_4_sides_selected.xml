@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Redrawn from ICON-CATALOGUE.md verbatim pathData for MX `bg_rectangle_clip_4_sides_selected`
+     (geometry data from the spec; this is our own file - no MX asset copied). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="77.0dp" android:height="36.0dp"
+    android:viewportWidth="77.0" android:viewportHeight="36.0">
+    <path
+        android:fillColor="@color/colored_btn_color"
+        android:pathData="M0 0V36H77V0" />
+</vector>

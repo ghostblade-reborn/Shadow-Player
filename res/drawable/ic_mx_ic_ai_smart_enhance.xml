@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Redrawn from ICON-CATALOGUE.md verbatim pathData for MX `ic_ai_smart_enhance`
+     (geometry data from the spec; this is our own file - no MX asset copied). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="20.0dp" android:height="18.0dp"
+    android:viewportWidth="20.0" android:viewportHeight="18.0">
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#ffffffff"
+        android:strokeWidth="1.2"
+        android:pathData="M2.273,13.822C3.186,13.822 3.947,14.581 3.947,15.542C3.947,16.504 3.186,17.263 2.273,17.263C1.361,17.263 0.6,16.504 0.6,15.542C0.6,14.581 1.361,13.822 2.273,13.822Z" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#ffffffff"
+        android:strokeWidth="1.2"
+        android:pathData="M10.659,12.476C11.572,12.476 12.333,13.235 12.333,14.197C12.333,15.159 11.572,15.918 10.659,15.918C9.747,15.918 8.986,15.159 8.986,14.197C8.986,13.236 9.747,12.477 10.659,12.476Z" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#ffffffff"
+        android:strokeWidth="1.2"
+        android:pathData="M12.01,5.663C12.212,5.625 12.4,5.78 12.4,5.986V7.81C12.4,7.967 12.288,8.103 12.133,8.132L4.24,9.636C4.038,9.675 3.85,9.519 3.85,9.313V7.49C3.85,7.332 3.962,7.196 4.117,7.166L12.01,5.663Z" />
+    <path
+        android:fillColor="#ffffffff"
+        android:pathData="M4.61,9.452C4.61,11.483 4.61,15.543 4.61,15.543C4.61,15.543 3.921,15.448 3.233,14.364C3.233,12.512 3.233,8.816 3.233,8.816C3.233,8.816 3.219,7.889 3.58,7.889C3.94,7.889 4.016,8.937 4.61,9.452Z" />
+    <path
+        android:fillColor="#ffffffff"
+        android:pathData="M12.996,7.471V14.198L11.619,13.269L11.619,8.399L12.996,7.471Z" />
+    <path
+        android:fillColor="#ffffffff"
+        android:strokeColor="#ffffffff"
+        android:strokeWidth="0.35"
+        android:strokeMiterLimit="10.0"
+        android:pathData="M15.521,0.424C15.481,0.244 15.301,0.144 15.121,0.184C15.021,0.204 14.941,0.274 14.901,0.364C14.351,1.564 13.391,2.524 12.191,3.074C12.031,3.154 11.951,3.344 12.031,3.514C12.081,3.614 12.171,3.684 12.281,3.704C13.551,3.874 14.551,4.874 14.731,6.154C14.751,6.304 14.871,6.414 15.011,6.434H15.051C15.181,6.434 15.301,6.354 15.351,6.234C15.851,5.014 16.821,4.044 18.041,3.544C18.211,3.474 18.291,3.284 18.221,3.114C18.181,3.014 18.101,2.944 17.991,2.924C17.481,2.804 17.001,2.564 16.591,2.224C16.051,1.754 15.671,1.134 15.501,0.444L15.521,0.424ZM15.871,4.254C15.601,4.544 15.361,4.854 15.161,5.194C14.801,4.314 14.101,3.624 13.221,3.264C13.591,3.024 13.941,2.754 14.261,2.444C14.601,2.104 14.901,1.724 15.161,1.314C15.551,2.184 16.241,2.884 17.111,3.284C16.661,3.544 16.251,3.874 15.881,4.254H15.871Z" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#ffffffff"
+        android:strokeWidth="0.75"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M17.5,6.864V9.864" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#ffffffff"
+        android:strokeWidth="0.75"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M19,8.364H16" />
+</vector>

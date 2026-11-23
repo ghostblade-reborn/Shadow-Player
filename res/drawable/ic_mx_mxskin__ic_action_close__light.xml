@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Redrawn from ICON-CATALOGUE.md verbatim pathData for MX `mxskin__ic_action_close__light`
+     (geometry data from the spec; this is our own file - no MX asset copied). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="16.0dp" android:height="16.0dp"
+    android:viewportWidth="16.0" android:viewportHeight="16.0">
+    <path
+        android:fillColor="#ff96a2ba"
+        android:fillType="evenOdd"
+        android:pathData="M12.714,3.286c0.26,0.26 0.26,0.682 0,0.943L8.943,8l3.771,3.771a0.667,0.667 0,0 1,-0.943 0.943L8,8.943l-3.771,3.771a0.667,0.667 0,0 1,-0.943 -0.943L7.057,8 3.286,4.229a0.667,0.667 0,1 1,0.943 -0.943L8,7.057l3.771,-3.771c0.26,-0.26 0.683,-0.26 0.943,0z" />
+</vector>

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Redrawn from ICON-CATALOGUE.md verbatim pathData for MX `mxskin__ic_action_history__light`
+     (geometry data from the spec; this is our own file - no MX asset copied). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="16.0dp" android:height="16.0dp"
+    android:viewportWidth="16.0" android:viewportHeight="16.0">
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#ff505a78"
+        android:strokeWidth="1.28"
+        android:fillType="evenOdd"
+        android:pathData="M8,8m-6.2,0a6.2,6.2 0,1 1,12.4 0a6.2,6.2 0,1 1,-12.4 0" />
+    <path
+        android:fillColor="#ff505a78"
+        android:strokeColor="#ff505a78"
+        android:strokeWidth="0.333"
+        android:fillType="nonZero"
+        android:pathData="M7.92,5.32c0.284,0 0.514,0.23 0.514,0.514v2.461l2.452,0.001a0.514,0.514 0,0 1,0 1.029L7.914,9.325A0.514,0.514 0,0 1,7.4 8.81l0.005,-0.058L7.405,5.834c0,-0.284 0.231,-0.514 0.515,-0.514z" />
+</vector>

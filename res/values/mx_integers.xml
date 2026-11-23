@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- MX Player 2.12.4 decoded integers (RESOURCE-TRUTH.md S4), offline subset.
+     mx_interface_auto_hide_delay_default is NOT an MX integer resource: it is the
+     SharedPreferences interface_auto_hide_delay default 0x7d0 = 2000 ms recorded in
+     MASTER-SCENE-SPEC S5, given a resource home here as the task directs. -->
+<resources>
+    <integer name="animation_default_duration">300</integer>
+    <integer name="interactive_anim_duration">100</integer>
+    <integer name="bottom_sheet_slide_duration">150</integer>
+    <integer name="app_bar_elevation_anim_duration">150</integer>
+    <integer name="design_tab_indicator_anim_duration_ms">300</integer>
+    <integer name="config_tooltipAnimTime">150</integer>
+    <integer name="abc_config_activityDefaultDur">220</integer>
+    <integer name="abc_config_activityShortDur">150</integer>
+    <integer name="default_subtitle_bottom_padding_dp">8</integer>
+    <integer name="list_tile_item_height">67</integer>
+    <integer name="local_list_path_status_height">42</integer>
+    <integer name="index_mark_finished">2</integer>
+    <integer name="index_mark_last_played">0</integer>
+    <integer name="index_mark_new">1</integer>
+    <integer name="index_mark_none">3</integer>
+    <integer name="added">1</integer>
+    <integer name="no_add">0</integer>
+    <integer name="view_gone">2</integer>
+    <integer name="view_invisible">1</integer>
+    <integer name="view_visible">0</integer>
+    <integer name="ffmpeg_required_version">1130</integer>
+    <integer name="cancel_button_image_alpha">127</integer>
+    <integer name="hide_password_duration">320</integer>
+    <integer name="show_password_duration">200</integer>
+    <integer name="mx_interface_auto_hide_delay_default">2000</integer>
+</resources>

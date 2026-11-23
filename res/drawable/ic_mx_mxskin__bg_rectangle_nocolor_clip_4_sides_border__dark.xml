@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Redrawn from ICON-CATALOGUE.md verbatim pathData for MX `mxskin__bg_rectangle_nocolor_clip_4_sides_border__dark`
+     (geometry data from the spec; this is our own file - no MX asset copied). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="328.0dp" android:height="48.0dp"
+    android:viewportWidth="328.0" android:viewportHeight="48.0">
+    <path
+        android:strokeColor="@color/mxskin__profile_uid_text__light"
+        android:strokeWidth="1.0"
+        android:pathData="M8 0H320C324.418 0 328 3.58172 328 8V40C328 44.4183 324.418 48 320 48H8C3.58172 48 0 44.4183 0 40V8C0 3.58172 3.58172 0 8 0Z" />
+</vector>
