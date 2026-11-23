@@ -1478,7 +1478,7 @@ class HelpActivity : Activity() {
                 "Q: Does the app use the internet?\n" +
                 "A: Never. The app has no internet permission at all."
             else -> "About" to
-                "Shadow Player 0.5.5\n\n" +
+                "Shadow Player 0.5.7\n\n" +
                 "A fully offline video player.\n\n" +
                 "Decoding: Android media framework (HW) plus FFmpeg 7.1.1 " +
                 "built from source and bundled with the app (HW+/SW).\n\n" +

@@ -505,14 +505,92 @@ object Store {
         if (value == Settings.defaultOf(key)) settings.remove(key) else settings[key] = value
     }
 
+    /** v0.5.6 smoothness: when the app enables this, persist()
+     *  serialises on the caller thread but hands the actual flash
+     *  write to a single coalescing writer thread — the player's
+     *  5-second position save used to write the whole state file
+     *  synchronously on the UI thread, a periodic playback hitch
+     *  MX never takes. Tests keep the synchronous default so file
+     *  assertions stay deterministic. */
+    @Volatile var asyncWrites = false
+    private val writeLock = Object()
+    private var pendingWrite: String? = null
+    private var writerStarted = false
+
     private fun persist() {
         if (loading) return
         val f = file ?: return
-        try {
-            f.writeText(toJsonString(), Charsets.UTF_8)
-        } catch (t: Throwable) {
-            /* a failed write must never crash playback */
+        val json = try { toJsonString() } catch (t: Throwable) { return }
+        if (!asyncWrites) {
+            try { f.writeText(json, Charsets.UTF_8) } catch (t: Throwable) {
+                /* a failed write must never crash playback */
+            }
+            return
         }
+        queueWrite(f, json)
+    }
+
+    /** Hands one serialised payload to the coalescing writer
+     *  thread (started on first use). The writer always writes the
+     *  LATEST queued payload, so bursts collapse into one flash
+     *  write and no caller ever blocks on storage. */
+    private fun queueWrite(f: File, json: String) {
+        synchronized(writeLock) {
+            pendingWrite = json
+            if (!writerStarted) {
+                writerStarted = true
+                val th = Thread {
+                    while (true) {
+                        val payload: String?
+                        synchronized(writeLock) {
+                            payload = pendingWrite
+                            pendingWrite = null
+                            if (payload == null) {
+                                try { writeLock.wait(500) } catch (e: InterruptedException) { /* loop */ }
+                            }
+                        }
+                        if (payload != null) {
+                            try { f.writeText(payload, Charsets.UTF_8) } catch (t: Throwable) { /* never crash */ }
+                        }
+                    }
+                }
+                th.isDaemon = true
+                th.name = "gb-store-writer"
+                th.start()
+            }
+            writeLock.notifyAll()
+        }
+    }
+
+    /** v0.5.7: lifecycle flush WITHOUT the flash write on the
+     *  caller thread. PlayerActivity's onPause/onDestroy used to
+     *  call [persistSync] — a full synchronous file write in the
+     *  middle of the PiP/home transition, exactly where Sir felt
+     *  the hitch. This serialises the current state (cheap, in
+     *  memory) and hands the write to the writer thread regardless
+     *  of the [asyncWrites] flag. The payload is queued before the
+     *  call returns, and the writer is a live daemon that drains
+     *  it immediately; a later [persistSync] (or any persist) can
+     *  still force durability where a caller truly needs it. */
+    fun persistAsync() {
+        if (loading) return
+        val f = file ?: return
+        val json = try { toJsonString() } catch (t: Throwable) { return }
+        queueWrite(f, json)
+    }
+
+    /** Flush any coalesced write synchronously — lifecycle exits
+     *  (pause/destroy) call this so the last position is durable
+     *  even if the process dies before the writer thread wakes. */
+    fun persistSync() {
+        if (loading) return
+        val f = file ?: return
+        val json: String
+        synchronized(writeLock) {
+            json = try { toJsonString() } catch (t: Throwable) { return }
+            pendingWrite = null
+        }
+        try { f.writeText(json, Charsets.UTF_8) } catch (t: Throwable) { /* never crash */ }
     }
 
     private fun encodeStringArray(items: List<String>): String =

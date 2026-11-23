@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- v0.5.7: layout animation for the library list/grid — rows
+     cascade top-to-bottom with a small per-row delay. -->
+<layoutAnimation xmlns:android="http://schemas.android.com/apk/res/android"
+    android:animation="@anim/list_item_in"
+    android:delay="0.35"
+    android:animationOrder="normal" />

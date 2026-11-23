@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- v0.5.7: returning to the previous activity — it brightens
+     back and settles from a small left offset. -->
+<set xmlns:android="http://schemas.android.com/apk/res/android"
+    android:interpolator="@android:anim/decelerate_interpolator">
+    <alpha android:fromAlpha="0.55" android:toAlpha="1.0"
+        android:duration="240" />
+    <translate android:fromXDelta="-3%" android:toXDelta="0"
+        android:fromYDelta="0" android:toYDelta="0"
+        android:duration="240" />
+</set>

@@ -820,6 +820,13 @@ class SwAudioSession {
 
     private fun startThread() {
         val th = Thread {
+            // v0.5.7: the audio decode thread IS the master clock —
+            // run it at urgent-audio priority like a media player
+            // should, so UI load cannot starve it into stutter.
+            runCatching {
+                android.os.Process.setThreadPriority(
+                    android.os.Process.THREAD_PRIORITY_URGENT_AUDIO)
+            }
             val chunkFrames = 4096
             val channels = if (handle != 0L) FFmpegEngine.outChannels(handle) else 2
             val buf = ByteArray(chunkFrames * channels * 2)
@@ -1298,6 +1305,14 @@ class SwVideoSession {
     private fun renderLoop() {
         val h = handle
         if (h == 0L) return
+        // v0.5.7: display-urgent priority for the render thread —
+        // frame presentation should not queue behind background
+        // work on a loaded device (the HW path gets this from the
+        // system's media stack; the SW path must ask for it).
+        runCatching {
+            android.os.Process.setThreadPriority(
+                android.os.Process.THREAD_PRIORITY_URGENT_DISPLAY)
+        }
         while (!closed) {
             if (!playing) {
                 // Paused: present the frame covering the frozen

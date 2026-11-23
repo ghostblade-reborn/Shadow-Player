@@ -18,4 +18,4 @@ Requires JDK 21 and the Android SDK (build-tools 35.0.0). The native engine is b
 ## Privacy
 The app declares no INTERNET permission and contains no analytics or location access. All data stays on the device.
 
-Current version: 0.5.5 (versionCode 11), minSdk 24, targetSdk 34.
+Current version: 0.5.7 (versionCode 13), minSdk 24, targetSdk 34.

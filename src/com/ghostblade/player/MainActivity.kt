@@ -13,8 +13,11 @@ import android.graphics.Path
 import android.graphics.PixelFormat
 import android.graphics.RectF
 import android.graphics.Typeface
+import android.graphics.Color
+import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.StateListDrawable
 import android.media.audiofx.Equalizer
 import android.os.Build
 import android.os.Bundle
@@ -95,6 +98,35 @@ class MainActivity : Activity() {
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val io = Executors.newFixedThreadPool(4)
+    /** v0.5.7: single-threaded display-model worker. Filtering,
+     *  grouping, sorting and every per-row derived string are
+     *  computed HERE, never on the UI thread — v0.5.6 built the
+     *  whole display model inside refreshDisplay() on the main
+     *  thread (and re-derived strings per row during flings),
+     *  which is the library lag Sir reported. Serial execution +
+     *  a generation counter keep results in order. */
+    private val displayIo = Executors.newSingleThreadExecutor()
+    @Volatile private var displayGen = 0
+
+    /** Per-row data precomputed on [displayIo] for the CURRENT
+     *  display model, keyed by video path. The adapter reads these
+     *  instead of calling Store / formatting strings while the
+     *  list is scrolling. */
+    private data class RowMeta(
+        val fields: String,
+        val status: String,
+        val lastPlayedText: String?,
+        val watchedFrac: Float,
+        val favourite: Boolean,
+        val isNew: Boolean,
+        val finished: Boolean
+    )
+    @Volatile private var rowMeta: Map<String, RowMeta> = emptyMap()
+    /** Folder new-counts precomputed on [displayIo], keyed by
+     *  folder name (folderRow used to re-count a whole folder's
+     *  videos on every bind). */
+    @Volatile private var folderNewCounts: Map<String, Int> = emptyMap()
+
     private val thumbCache = object : LruCache<Long, Bitmap>(96) {}
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
@@ -119,12 +151,28 @@ class MainActivity : Activity() {
 
     /** round_box_small.xml: rectangle, 2dp corners, 4dp horizontal
      *  padding (the TextView supplies the padding); the solid colour
-     *  is the caller's tint (tag_red / duration_background / tag_dark). */
-    private fun tagBg(color: Int): GradientDrawable = GradientDrawable().apply {
-        shape = GradientDrawable.RECTANGLE
-        cornerRadius = dp(2).toFloat()
-        setColor(color)
+     *  is the caller's tint (tag_red / duration_background / tag_dark).
+     *  v0.5.7: instances are cached per colour — rows used to mint a
+     *  fresh GradientDrawable on every bind. */
+    private val tagBgCache = HashMap<Int, GradientDrawable>()
+    private fun tagBg(color: Int): GradientDrawable = tagBgCache.getOrPut(color) {
+        GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = dp(2).toFloat()
+            setColor(color)
+        }
     }
+
+    /** v0.5.7: row press feedback — a subtle pressed tint over the
+     *  row's normal colour, MX-style. One StateListDrawable per row
+     *  (drawables carry per-view state; the colour drawables inside
+     *  are shared). */
+    private fun pressBackground(normalColor: Int): StateListDrawable =
+        StateListDrawable().apply {
+            addState(intArrayOf(android.R.attr.state_pressed),
+                ColorDrawable(mxSelectedBg()))
+            addState(intArrayOf(), ColorDrawable(normalColor))
+        }
 
     /** ic_more_option / ic_grid_more, catalogue-measured 18×18dp
      *  glyph: three dots. Redrawn, never MX's raster. */
@@ -471,6 +519,7 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         Store.init(this)
+        Store.asyncWrites = true
         PSet.init(this)
         theme = Settings.currentThemeColors(this)
         buildUi()
@@ -656,6 +705,13 @@ class MainActivity : Activity() {
             setBackgroundColor(theme.pageBg)
             visibility = View.GONE
         }
+        // v0.5.7: rows cascade in (fade + short rise) whenever a
+        // fresh display model lands — see refreshDisplay's apply
+        // phase, which schedules the layout animation.
+        val cascade = android.view.animation.AnimationUtils.loadLayoutAnimation(
+            this, R.anim.list_layout)
+        listView.layoutAnimation = cascade
+        gridView.layoutAnimation = cascade
         emptyView = TextView(this).apply {
             // list_layout_recyclerview.xml rl_empty: 13sp, colour
             // mxskin__list_more (dark #DADDE4 / light #96A2BA),
@@ -879,30 +935,53 @@ class MainActivity : Activity() {
         io.execute {
             val respectNomedia = Store.boolSetting(Settings.RESPECT_NOMEDIA)
             val scanned = Library.scan(this, respectNomedia)
-            mainHandler.post {
-                rawScan = scanned
-                applyFilters()
+            // v0.5.7: filtering joins the scan off the UI thread —
+            // v0.5.6 posted back to main and filtered there.
+            displayIo.execute {
+                val filtered = filterScan(scanned)
+                mainHandler.post {
+                    rawScan = scanned
+                    videos = filtered
+                    restoreLastFolder()
+                    refreshDisplay()
+                }
             }
         }
     }
 
-    private fun applyFilters() {
+    /** Scan-settings filtering (v0.5.7: runs on [displayIo]). */
+    private fun filterScan(source: List<VideoItem>): List<VideoItem> {
         val showHidden = Store.boolSetting(Settings.SHOW_HIDDEN)
         var list = Library.filterByScanSettings(
-            rawScan,
+            source,
             Store.stringSetSetting(Settings.SCAN_FOLDERS),
             Store.stringSetSetting(Settings.SCAN_EXTENSIONS),
             showHidden)
         list = Library.visibleItems(list, Store.hiddenPaths(),
             Store.privateEntries().map { it.origPath }.toSet(), showHidden)
-        videos = list
-        // Restore the folder the user was browsing (v0.1 lastFolder).
+        return list
+    }
+
+    /** Restore the folder the user was browsing (v0.1 lastFolder).
+     *  Main thread: reads/writes view state. */
+    private fun restoreLastFolder() {
         val last = Store.lastFolder
         if (currentFolder == null && last != null &&
             videos.any { it.folder == last }) {
             currentFolder = last
         }
-        refreshDisplay()
+    }
+
+    private fun applyFilters() {
+        val source = rawScan
+        displayIo.execute {
+            val filtered = filterScan(source)
+            mainHandler.post {
+                videos = filtered
+                restoreLastFolder()
+                refreshDisplay()
+            }
+        }
     }
 
     private fun sortedVideos(source: List<VideoItem>): List<VideoItem> {
@@ -913,77 +992,163 @@ class MainActivity : Activity() {
             Store.boolSetting(Settings.LIST_SORT_ASCENDING), finished)
     }
 
+    /** Sort with pre-captured settings — the displayIo half of
+     *  [sortedVideos], so display prep never re-reads settings. */
+    private fun sortForDisplay(
+        source: List<VideoItem>, field: String, ascending: Boolean,
+        finished: Set<String>
+    ): List<VideoItem> = Library.sortVideos(
+        source, Library.sortModeForField(field), ascending, finished)
+
+    /** The adapter's fields line, computed from a pre-captured
+     *  field set (v0.5.7: computed on displayIo into [RowMeta]). */
+    private fun fieldsLineFor(video: VideoItem, fields: Set<String>): String {
+        val parts = mutableListOf<String>()
+        if (fields.contains("duration")) parts.add(LibFmt.duration(video.durationMs))
+        if (fields.contains("size")) parts.add(LibFmt.size(video.sizeBytes))
+        if (fields.contains("resolution") && video.width > 0) {
+            parts.add(LibFmt.resolution(video.width, video.height))
+        }
+        if (fields.contains("date")) parts.add(LibFmt.date(video.dateAddedSec))
+        if (fields.contains("framerate") && video.frameRate > 0f) {
+            parts.add("%.0f fps".format(video.frameRate))
+        }
+        if (fields.contains("path")) parts.add(video.path)
+        return parts.joinToString(" · ")
+    }
+
+    private fun statusLineFor(video: VideoItem): String = when {
+        Store.isFinished(video.path) -> "✓ Finished"
+        Store.resumePos(video.path) > 0L ->
+            LibFmt.remaining(video.durationMs, Store.resumePos(video.path))
+        else -> ""
+    }
+
+    /** v0.5.7: refreshDisplay is now a two-phase pipeline.
+     *  Phase 1 (here, caller thread): capture every input.
+     *  Phase 2 ([displayIo]): group, sort, count, format — all
+     *  the work v0.5.6 did synchronously on the UI thread, plus
+     *  the FAB's File.exists() probe and every per-row derived
+     *  string for the adapter. Phase 3 (main): apply the finished
+     *  model to the views. A generation counter drops stale
+     *  results when refreshes race (e.g. fast search typing). */
     private fun refreshDisplay() {
+        val gen = ++displayGen
+        val allVideos = videos
+        val folder = currentFolder
+        val isSearching = searching
+        val query = searchQuery
         val viewMode = Store.stringSetting(Settings.LIST_VIEW_MODE)
         val grid = Store.stringSetting(Settings.LIST_LAYOUT) == "grid"
-        folderGroups = Library.groupByFolder(videos)
-        displayVideos = when {
-            searching -> sortedVideos(Library.filterByTitle(videos, searchQuery))
-            viewMode == "folders" && currentFolder != null ->
-                sortedVideos(videos.filter { it.folder == currentFolder })
-            viewMode == "files" -> sortedVideos(videos)
-            viewMode == "all" -> sortedVideos(videos)
-            else -> emptyList() // folders root: groups are the rows
-        }
-        listView.visibility = if (grid) View.GONE else View.VISIBLE
-        gridView.visibility = if (grid) View.VISIBLE else View.GONE
-        val showGroups = !searching && viewMode == "folders" && currentFolder == null
-        val rowCount = when {
-            searching && searchQuery.isBlank() -> Store.searchHistory().size
-            showGroups -> folderGroups.size
-            else -> displayVideos.size
-        }
-        emptyView.visibility = if (rowCount == 0) View.VISIBLE else View.GONE
-        if (rowCount == 0) {
-            emptyView.text = when {
-                !hasPermission() ->
+        val sortField = Store.stringSetting(Settings.LIST_SORT_FIELD)
+        val sortAsc = Store.boolSetting(Settings.LIST_SORT_ASCENDING)
+        val finishedSet = allVideos.filter { Store.isFinished(it.path) }
+            .map { it.path }.toSet()
+        val showGroups = !isSearching && viewMode == "folders" && folder == null
+        val lastPath = Store.lastPlayedPath()
+        val fabSetting = Store.boolSetting(Settings.LIST_FLOATING_BUTTON)
+        val scrollSetting = Store.boolSetting(Settings.SCROLL_TO_LAST_MEDIA)
+        val hasPerm = hasPermission()
+        displayIo.execute {
+            val groups = Library.groupByFolder(allVideos)
+            val display = when {
+                isSearching -> sortForDisplay(
+                    Library.filterByTitle(allVideos, query), sortField, sortAsc, finishedSet)
+                viewMode == "folders" && folder != null -> sortForDisplay(
+                    allVideos.filter { it.folder == folder }, sortField, sortAsc, finishedSet)
+                viewMode == "files" -> sortForDisplay(allVideos, sortField, sortAsc, finishedSet)
+                viewMode == "all" -> sortForDisplay(allVideos, sortField, sortAsc, finishedSet)
+                else -> emptyList() // folders root: groups are the rows
+            }
+            val rowCount = when {
+                isSearching && query.isBlank() -> Store.searchHistory().size
+                showGroups -> groups.size
+                else -> display.size
+            }
+            val emptyText = when {
+                !hasPerm ->
                     "Video access is not granted.\nGrant access in system Settings, then pull to refresh."
-                searching && searchQuery.isNotBlank() -> "No videos match \"$searchQuery\""
-                searching -> "Type to search ${videos.size} videos"
-                videos.isEmpty() -> "No videos found on this device"
+                isSearching && query.isNotBlank() -> "No videos match \"$query\""
+                isSearching -> "Type to search ${allVideos.size} videos"
+                allVideos.isEmpty() -> "No videos found on this device"
                 else -> "Nothing to show here"
             }
-        }
-        // Status bar (rl_status): MX shows it over the list bottom;
-        // its fragment-side trigger was not established by decompile,
-        // so ours shows it while a folder is open, with the folder's
-        // on-disk path as the status text.
-        if (currentFolder != null && displayVideos.isNotEmpty()) {
-            statusBar.visibility = View.VISIBLE
-            statusText.text = Library.dirOfPath(displayVideos.first().path)
-        } else {
-            statusBar.visibility = View.GONE
-        }
-        // Floating play-last button visibility. v0.5.4: the gate no
-        // longer requires the last-played path to appear in the
-        // current scan — scan filtering/timing could keep Sir's most
-        // important button hidden even though he had just watched
-        // the video. Setting ON + a recorded path that still exists
-        // on disk (or a content URI) is enough.
-        val lastPath = Store.lastPlayedPath()
-        fab.visibility = if (Store.boolSetting(Settings.LIST_FLOATING_BUTTON) &&
-            lastPath.isNotEmpty() &&
-            (lastPath.startsWith("content://") || java.io.File(lastPath).exists()))
-            View.VISIBLE else View.GONE
-        adapter?.notifyDataSetChanged()
-        // "Scroll down to last played media" (List setting): bring
-        // the row holding the last-played video — or its folder, at
-        // the folders root — into view.
-        if (!searching && Store.boolSetting(Settings.SCROLL_TO_LAST_MEDIA)) {
-            val last = Store.lastPlayedPath()
-            if (last.isNotEmpty()) {
-                val idx = if (showGroups) {
-                    folderGroups.indexOfFirst { g -> g.videos.any { it.path == last } }
+            // Status bar (rl_status): shown while a folder is open,
+            // with the folder's on-disk path as the status text.
+            val statusTextValue = if (folder != null && display.isNotEmpty()) {
+                Library.dirOfPath(display.first().path)
+            } else null
+            // Floating play-last button gate (v0.5.4 semantics,
+            // unchanged): setting ON + a recorded path that still
+            // exists on disk (or a content URI). The exists() probe
+            // is storage I/O — it now runs here, not on the UI
+            // thread.
+            val fabVisible = fabSetting && lastPath.isNotEmpty() &&
+                (lastPath.startsWith("content://") || java.io.File(lastPath).exists())
+            // "Scroll down to last played media" (List setting):
+            // the row holding the last-played video — or its
+            // folder, at the folders root.
+            val scrollIndex = if (!isSearching && scrollSetting && lastPath.isNotEmpty()) {
+                if (showGroups) {
+                    groups.indexOfFirst { g -> g.videos.any { it.path == lastPath } }
                 } else {
-                    displayVideos.indexOfFirst { it.path == last }
+                    display.indexOfFirst { it.path == lastPath }
                 }
-                if (idx >= 0) {
-                    listView.setSelection(idx)
-                    gridView.setSelection(idx)
+            } else -1
+            // Per-row derived data for the adapter (see RowMeta).
+            val nowSec = System.currentTimeMillis() / 1000L
+            val newPeriod = Store.intSetting(Settings.NEW_TAGGED_PERIOD)
+            val fieldsSet = Store.stringSetSetting(Settings.LIST_FIELDS)
+            val meta = HashMap<String, RowMeta>(display.size * 2 + 1)
+            for (v in display) {
+                val lastAt = Store.lastPlayedAt(v.path)
+                meta[v.path] = RowMeta(
+                    fields = fieldsLineFor(v, fieldsSet),
+                    status = statusLineFor(v),
+                    lastPlayedText = if (lastAt > 0L) {
+                        "Last played ${LibFmt.dateTime(lastAt)}"
+                    } else null,
+                    watchedFrac = Library.watchedFraction(
+                        v.durationMs, Store.resumePos(v.path)),
+                    favourite = Store.isFavourite(v.path),
+                    isNew = Library.isNewTag(v.dateModifiedSec, newPeriod, nowSec),
+                    finished = Store.isFinished(v.path)
+                )
+            }
+            val newCounts = HashMap<String, Int>(groups.size * 2 + 1)
+            for (g in groups) {
+                newCounts[g.name] = g.videos.count {
+                    Library.isNewTag(it.dateModifiedSec, newPeriod, nowSec)
                 }
             }
+            mainHandler.post {
+                if (gen != displayGen) return@post // a newer refresh superseded this one
+                folderGroups = groups
+                displayVideos = display
+                rowMeta = meta
+                folderNewCounts = newCounts
+                listView.visibility = if (grid) View.GONE else View.VISIBLE
+                gridView.visibility = if (grid) View.VISIBLE else View.GONE
+                emptyView.visibility = if (rowCount == 0) View.VISIBLE else View.GONE
+                if (rowCount == 0) emptyView.text = emptyText
+                if (statusTextValue != null) {
+                    statusBar.visibility = View.VISIBLE
+                    statusText.text = statusTextValue
+                } else {
+                    statusBar.visibility = View.GONE
+                }
+                fab.visibility = if (fabVisible) View.VISIBLE else View.GONE
+                adapter?.notifyDataSetChanged()
+                if (scrollIndex >= 0) {
+                    listView.setSelection(scrollIndex)
+                    gridView.setSelection(scrollIndex)
+                }
+                // v0.5.7: gentle cascade when a fresh model lands.
+                listView.scheduleLayoutAnimation()
+                gridView.scheduleLayoutAnimation()
+                updateChrome()
+            }
         }
-        updateChrome()
     }
 
     private fun updateChrome() {
@@ -1810,6 +1975,7 @@ class MainActivity : Activity() {
                 // a half-badge, exactly what Sir photographed.
                 clipChildren = false
                 clipToPadding = false
+                background = pressBackground(Color.TRANSPARENT)
             }
             val iconWrap = FrameLayout(this@MainActivity).apply {
                 clipChildren = false
@@ -1822,10 +1988,15 @@ class MainActivity : Activity() {
                 // view, so a 76dp slot renders it at MX's size.
                 layoutParams = FrameLayout.LayoutParams(dp(76), dp(76))
             })
-            val nowSec = System.currentTimeMillis() / 1000L
-            val newCount = group.videos.count {
-                Library.isNewTag(it.dateModifiedSec,
-                    Store.intSetting(Settings.NEW_TAGGED_PERIOD), nowSec)
+            // v0.5.7: precomputed on displayIo (see folderNewCounts);
+            // the fallback keeps the row correct if a bind ever
+            // races the model build.
+            val newCount = folderNewCounts[group.name] ?: run {
+                val nowSec = System.currentTimeMillis() / 1000L
+                group.videos.count {
+                    Library.isNewTag(it.dateModifiedSec,
+                        Store.intSetting(Settings.NEW_TAGGED_PERIOD), nowSec)
+                }
             }
             if (newCount > 0) {
                 // v0.5: MX's numbered red_badge (decoded: 20dp tall,
@@ -1837,11 +2008,7 @@ class MainActivity : Activity() {
                     typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
                     setTextColor(0xFFFFFFFF.toInt())
                     gravity = Gravity.CENTER
-                    background = GradientDrawable().apply {
-                        shape = GradientDrawable.RECTANGLE
-                        cornerRadius = dp(10).toFloat()
-                        setColor(0xFFF2405D.toInt())
-                    }
+                    background = badgeBg
                     setPadding(dp(5), 0, dp(5), 0)
                     layoutParams = FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.WRAP_CONTENT, dp(20)).apply {
@@ -1913,6 +2080,7 @@ class MainActivity : Activity() {
             val cell = LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.VERTICAL
                 gravity = Gravity.CENTER_HORIZONTAL
+                background = pressBackground(Color.TRANSPARENT)
             }
             cell.addView(ImageView(this@MainActivity).apply {
                 setImageResource(R.drawable.ic_folder)
@@ -1940,28 +2108,15 @@ class MainActivity : Activity() {
             return cell
         }
 
-        private fun fieldsLine(video: VideoItem): String {
-            val fields = Store.stringSetSetting(Settings.LIST_FIELDS)
-            val parts = mutableListOf<String>()
-            if (fields.contains("duration")) parts.add(LibFmt.duration(video.durationMs))
-            if (fields.contains("size")) parts.add(LibFmt.size(video.sizeBytes))
-            if (fields.contains("resolution") && video.width > 0) {
-                parts.add(LibFmt.resolution(video.width, video.height))
-            }
-            if (fields.contains("date")) parts.add(LibFmt.date(video.dateAddedSec))
-            if (fields.contains("framerate") && video.frameRate > 0f) {
-                parts.add("%.0f fps".format(video.frameRate))
-            }
-            if (fields.contains("path")) parts.add(video.path)
-            return parts.joinToString(" · ")
-        }
+        // v0.5.7: both lines come from the displayIo-precomputed
+        // RowMeta; the live computation remains as a fallback for
+        // binds that race the model build.
+        private fun fieldsLine(video: VideoItem): String =
+            rowMeta[video.path]?.fields
+                ?: fieldsLineFor(video, Store.stringSetSetting(Settings.LIST_FIELDS))
 
-        private fun statusLine(video: VideoItem): String = when {
-            Store.isFinished(video.path) -> "✓ Finished"
-            Store.resumePos(video.path) > 0L ->
-                LibFmt.remaining(video.durationMs, Store.resumePos(video.path))
-            else -> ""
-        }
+        private fun statusLine(video: VideoItem): String =
+            rowMeta[video.path]?.status ?: statusLineFor(video)
 
         /** CardView with MX's decoded 1:0.564 ratio
          *  (list_grid_media.xml layout_constraintDimensionRatio). */
@@ -1990,13 +2145,30 @@ class MainActivity : Activity() {
          *  flag (FileOps' hasEmbeddedSubtitle is always false).
          *  The 2dp resume progress bar is our retained feature —
          *  MX's layouts carry no equivalent element. */
+        // v0.5.7: the folder NEW badge background — also identical
+        // for every row, shared like the thumbnail card's.
+        private val badgeBg: GradientDrawable by lazy {
+            GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = dp(10).toFloat()
+                setColor(0xFFF2405D.toInt())
+            }
+        }
+
+        // v0.5.7: the thumbnail card background is identical for
+        // every row — one shared instance instead of a fresh
+        // GradientDrawable per bind.
+        private val thumbFrameBg: GradientDrawable by lazy {
+            GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = dp(4).toFloat() // cardCornerRadius 4dp
+                setColor(0xFF000000.toInt())
+            }
+        }
+
         private fun thumbFrame(video: VideoItem, grid: Boolean): FrameLayout {
             val frame = (if (grid) RatioFrameLayout() else FrameLayout(this@MainActivity)).apply {
-                background = GradientDrawable().apply {
-                    shape = GradientDrawable.RECTANGLE
-                    cornerRadius = dp(4).toFloat() // cardCornerRadius 4dp
-                    setColor(0xFF000000.toInt())
-                }
+                background = thumbFrameBg
                 clipToOutline = true
             }
             frame.addView(ImageView(this@MainActivity).apply {
@@ -2015,7 +2187,10 @@ class MainActivity : Activity() {
             }
             frame.addView(img)
             loadThumbnail(video, img)
-            if (Library.isNewTag(video.dateModifiedSec,
+            // v0.5.7: NEW / favourite / watched state from RowMeta
+            // (displayIo), live reads only as a racing fallback.
+            val meta = rowMeta[video.path]
+            if (meta?.isNew ?: Library.isNewTag(video.dateModifiedSec,
                     Store.intSetting(Settings.NEW_TAGGED_PERIOD),
                     System.currentTimeMillis() / 1000L)) {
                 frame.addView(TextView(this@MainActivity).apply {
@@ -2033,7 +2208,7 @@ class MainActivity : Activity() {
                     }
                 })
             }
-            if (Store.isFavourite(video.path)) {
+            if (meta?.favourite ?: Store.isFavourite(video.path)) {
                 frame.addView(ImageView(this@MainActivity).apply {
                     // v0.5: drawn heart path in the 16/24dp slot
                     // instead of the "♥" font glyph.
@@ -2059,8 +2234,9 @@ class MainActivity : Activity() {
                     setMargins(0, 0, dp(4), dp(4))
                 }
             })
-            val frac = Library.watchedFraction(video.durationMs, Store.resumePos(video.path))
-            if (frac > 0f && !Store.isFinished(video.path)) {
+            val frac = meta?.watchedFrac
+                ?: Library.watchedFraction(video.durationMs, Store.resumePos(video.path))
+            if (frac > 0f && !(meta?.finished ?: Store.isFinished(video.path))) {
                 val bar = ProgressBar(this@MainActivity, null,
                     android.R.attr.progressBarStyleHorizontal).apply {
                     max = 1000
@@ -2104,7 +2280,10 @@ class MainActivity : Activity() {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
                 setPadding(dp(14), dp(8), 0, dp(8))
-                if (isSel) setBackgroundColor(mxSelectedBg())
+                // v0.5.7: press feedback on every row; the checked
+                // colour stays the resting background in selection.
+                background = pressBackground(
+                    if (isSel) mxSelectedBg() else Color.TRANSPARENT)
             }
             row.addView(thumbFrame(video, grid = false),
                 LinearLayout.LayoutParams(dp(96), dp(56)))
@@ -2121,10 +2300,15 @@ class MainActivity : Activity() {
                 setLineSpacing(dp(4).toFloat(), 1f)
                 setPadding(0, 0, 0, dp(2))
             })
-            val lastAt = Store.lastPlayedAt(video.path)
-            if (lastAt > 0L) {
+            // v0.5.7: precomputed "Last played" text (RowMeta);
+            // live read only as a racing fallback.
+            val lastPlayedText = rowMeta[video.path]?.lastPlayedText ?: run {
+                val lastAt = Store.lastPlayedAt(video.path)
+                if (lastAt > 0L) "Last played ${LibFmt.dateTime(lastAt)}" else null
+            }
+            if (lastPlayedText != null) {
                 texts.addView(TextView(this@MainActivity).apply {
-                    text = "Last played ${LibFmt.dateTime(lastAt)}"
+                    text = lastPlayedText
                     textSize = 12f
                     setTextColor(mxSecondary())
                     maxLines = 1
@@ -2188,7 +2372,8 @@ class MainActivity : Activity() {
             val cell = LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(0, dp(4), 0, dp(4))
-                if (isSel) setBackgroundColor(mxSelectedBg())
+                background = pressBackground(
+                    if (isSel) mxSelectedBg() else Color.TRANSPARENT)
             }
             val thumb = thumbFrame(video, grid = true)
             cell.addView(thumb, LinearLayout.LayoutParams(

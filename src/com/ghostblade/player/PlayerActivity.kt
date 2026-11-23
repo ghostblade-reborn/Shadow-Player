@@ -1731,6 +1731,16 @@ class PlayerActivity : Activity() {
          *  deleted on that path (the ticker already early-returned
          *  there; it is now also never posted there). */
         private const val SYNC_TICK_MS = 250L
+        /** v0.5.7: housekeeping cadence — subtitle cue updates,
+         *  A–B enforcement, external-audio reconciliation, sleep
+         *  timer and SW completion polling moved OFF the 100 ms UI
+         *  tick onto this 250 ms loop (the sync tick's cadence).
+         *  The UI tick now only moves the seekbar + time labels. */
+        private const val HOUSEKEEPING_TICK_MS = 250L
+        /** v0.5.7: chrome/menu glide duration — the old 100 ms
+         *  alpha fades snapped; ~260 ms with a decelerate
+         *  interpolator reads as MX-grade motion. */
+        private const val CHROME_ANIM_MS = 260L
         private const val FINISH_FRACTION = 0.95
         private const val RESUME_MIN_MS = 5000L
         private const val NOTIF_CHANNEL = "gbp_playback"
@@ -1764,6 +1774,10 @@ class PlayerActivity : Activity() {
     private var mp: MediaPlayer? = null
     private var surface: Surface? = null
     private var surfaceReady = false
+    /** Last surface size the SW engine was windowed to — surfaceChanged
+     *  re-attaches only on a real size change (v0.5.6 PiP fix). */
+    private var surfaceW = 0
+    private var surfaceH = 0
     private var prepared = false
     private var durationMs = 0
     private var videoW = 0
@@ -1774,7 +1788,22 @@ class PlayerActivity : Activity() {
     private var errorShown = false
     private var playWhenReady = true
     private var inPip = false
+    /** v0.5.7 PiP fix: set inside enterPip() BEFORE the framework
+     *  call. onPause fires before onPictureInPictureModeChanged
+     *  during PiP entry, so the lifecycle must consult this flag
+     *  (and the framework's own isInPictureInPictureMode) — the
+     *  local inPip flag alone is still false at onPause time,
+     *  which is why v0.5.6 paused playback and released the player
+     *  mid-entry and the PiP window came up frozen/dead. */
+    private var enteringPip = false
     private var backgrounded = false
+
+    /** True while a PiP entry is in flight or PiP is active, by
+     *  EITHER our flags or the framework's own state — lifecycle
+     *  callbacks must never pause/stop/release in any of them. */
+    private fun isPipTransitionOrActive(): Boolean =
+        enteringPip || inPip ||
+            (Build.VERSION.SDK_INT >= 24 && isInPictureInPictureMode)
 
     // ---- decoder state ----
     /** Resolved mode for this file: 1 HW, 4 HW+, 2 SW (MX values). */
@@ -1961,16 +1990,32 @@ class PlayerActivity : Activity() {
             handler.postDelayed(this, SAVE_INTERVAL_MS)
         }
     }
-    /** §S2 unified 100 ms loop: progress + time labels + subtitle
-     *  cue update in one fan-out, polling the engine clock on engine
-     *  paths (currentPos() already prefers EngineBridge.position). */
+    /** §S2 unified 100 ms loop. v0.5.7: this loop now ONLY moves
+     *  the seekbar and the time labels — subtitle cues, A–B,
+     *  external audio and the sleep timer moved to the 250 ms
+     *  housekeeping loop below, so the per-frame UI work is the
+     *  minimum playback needs. */
     private val progressRunnable = object : Runnable {
         override fun run() {
             updateProgress()
-            updateSubtitle()
             handler.postDelayed(this, UI_TICK_MS)
         }
     }
+    /** v0.5.7 housekeeping loop (250 ms): everything the UI tick
+     *  used to fan out to that is not the seekbar/labels. Runs in
+     *  every decoder mode (the HW+ sync ticker stays separate —
+     *  it is a clock-slaving loop, not housekeeping). */
+    private val housekeepingRunnable = object : Runnable {
+        override fun run() {
+            updateHousekeeping()
+            handler.postDelayed(this, HOUSEKEEPING_TICK_MS)
+        }
+    }
+    /** Label caches for the UI tick: the time labels only change
+     *  once a second, but the tick runs 10×/s — rewriting the same
+     *  string forced a text layout pass every tick. */
+    private var lastCurTimeText: String? = null
+    private var lastDurTimeText: String? = null
     /** §S2 volume ramp (what=3 equivalent): steps the MediaPlayer
      *  volume toward [volumeRampTarget] every 50 ms. Engine paths
      *  keep their own gain; this drives the HW path's fades. */
@@ -1997,6 +2042,10 @@ class PlayerActivity : Activity() {
         handler.removeCallbacks(volumeRampRunnable)
         handler.post(volumeRampRunnable)
     }
+    /** v0.5.6: consecutive-tick counter for HW+ drift corrections
+     *  (see syncEngineClock) — a correction must sustain across two
+     *  ticks before it acts. */
+    private var syncHoldStreak = 0
     private val syncRunnable = object : Runnable {
         override fun run() {
             syncEngineClock()
@@ -2010,7 +2059,40 @@ class PlayerActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         Store.init(this)
+        Store.asyncWrites = true
         PSet.init(this)
+        // v0.5.6 smoothness: ask the display for its highest refresh
+        // rate while the player is open — on a 120 Hz panel, 24 fps
+        // content then gets an even 5:5 cadence instead of 60 Hz
+        // 3:2 pulldown judder. (MX's pacing constants live inside
+        // its closed native lib; this is the platform mechanism
+        // that reproduces the same feel.)
+        if (android.os.Build.VERSION.SDK_INT >= 23) {
+            runCatching {
+                val display = windowManager.defaultDisplay
+                val current = display.mode
+                // v0.5.7: pick the fastest mode AT THE CURRENT
+                // physical size and request it by mode id as well
+                // as by rate — preferredRefreshRate alone is only
+                // a hint on some OEM builds; the mode id is the
+                // explicit switch. Verified applied: both fields
+                // are set on the window attributes before the
+                // content view is attached.
+                val best = display.supportedModes
+                    .filter {
+                        it.physicalWidth == current.physicalWidth &&
+                            it.physicalHeight == current.physicalHeight
+                    }
+                    .maxByOrNull { it.refreshRate }
+                    ?: display.supportedModes.maxByOrNull { it.refreshRate }
+                if (best != null && best.refreshRate > 0f) {
+                    val lp = window.attributes
+                    lp.preferredDisplayModeId = best.modeId
+                    lp.preferredRefreshRate = best.refreshRate
+                    window.attributes = lp
+                }
+            }
+        }
         avSyncEnabled = PSet.avSync
         // Playback theme (§2.7.21): chrome tokens stay MX-dark for
         // every dark theme (they share them per spec §1); the theme's
@@ -2051,6 +2133,10 @@ class PlayerActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        // A PiP entry that never landed (framework refused after
+        // enterPip armed the flag) must not wedge the lifecycle:
+        // if we are resumed and NOT in PiP, the entry is over.
+        if (!isInPictureInPictureModeCompat()) enteringPip = false
         if (backgrounded) {
             // Returned from background play: playback never stopped;
             // drop the notification and resume normal chrome.
@@ -2070,17 +2156,29 @@ class PlayerActivity : Activity() {
 
     override fun onPause() {
         super.onPause()
-        wasPlayingBeforePause = isPlaying()
-        if (!inPip && !backgrounded) {
+        // v0.5.7 PiP fix: during PiP entry (and while in PiP) the
+        // player must NOT pause, stop its tickers, or release —
+        // playback continues inside the PiP window, exactly like
+        // MX. v0.5.6 checked only the local inPip flag here, but
+        // onPause runs BEFORE onPictureInPictureModeChanged(true),
+        // so every entry paused + stopped tickers, and onStop then
+        // released the player — the frozen/dead PiP picture Sir
+        // reported. Consult the entering flag AND framework state.
+        val pip = isPipTransitionOrActive()
+        if (!pip) wasPlayingBeforePause = isPlaying()
+        if (!pip && !backgrounded) {
             pausePlayback()
             stopTickers()
         }
         savePosition()
+        // v0.5.7: async flush — a synchronous flash write here
+        // hitched the PiP/home transition itself.
+        Store.persistAsync()
     }
 
     override fun onStop() {
         super.onStop()
-        if (!inPip && !backgrounded) {
+        if (!isPipTransitionOrActive() && !backgrounded) {
             // Activity fully gone (not PiP, not background play): release.
             releaseAll()
         }
@@ -2094,7 +2192,31 @@ class PlayerActivity : Activity() {
         PlaybackService.stop(this)
         releaseAll()
         cancelNotification()
+        Store.persistAsync()
         super.onDestroy()
+    }
+
+    private fun isInPictureInPictureModeCompat(): Boolean =
+        Build.VERSION.SDK_INT >= 24 && isInPictureInPictureMode
+
+    /** Re-attach the live surface after a PiP transition and make
+     *  sure playback is actually running when it should be. The
+     *  SurfaceHolder callbacks usually fire too, but on several
+     *  OEM builds a PiP resize delivers neither surfaceCreated nor
+     *  a usable surfaceChanged — this callback is the one signal
+     *  that always arrives. */
+    private fun reattachSurfaceForPip() {
+        val s = surface ?: return
+        runCatching { mp?.setSurface(s) }
+        if (swMode) {
+            surfaceW = videoView.width
+            surfaceH = videoView.height
+            runCatching { swVideo?.attachSurface(s) }
+        }
+        // Playback continues in PiP — never pause. If an OEM path
+        // paused the MediaPlayer underneath us during the window
+        // transition, restart it when the user's intent is play.
+        if (prepared && playWhenReady && !isPlaying()) startPlayback()
     }
 
     override fun onUserLeaveHint() {
@@ -2112,6 +2234,10 @@ class PlayerActivity : Activity() {
     ) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
         inPip = isInPictureInPictureMode
+        // The transition has landed either way — the arming flag's
+        // job (covering the onPause/onStop that precede this
+        // callback) is done.
+        enteringPip = false
         if (inPip) {
             hideControls(instant = true)
             menuPanel.visibility = View.GONE
@@ -2122,7 +2248,16 @@ class PlayerActivity : Activity() {
             sheetScrim.visibility = View.GONE
             hideFloatBar()
             if (::subPanelBar.isInitialized) subPanelBar.visibility = View.GONE
+            // v0.5.7: re-attach the surface for BOTH paths so the
+            // small window always has a live picture, and keep
+            // playback running inside PiP.
+            reattachSurfaceForPip()
+            applyVideoTransform()
         } else {
+            // Back to fullscreen: same live surface, chrome
+            // restored, playback continues seamlessly.
+            reattachSurfaceForPip()
+            applyVideoTransform()
             showControls()
         }
     }
@@ -2258,10 +2393,22 @@ class PlayerActivity : Activity() {
 
             override fun surfaceChanged(holder: SurfaceHolder, format: Int, w: Int, h: Int) {
                 applyVideoTransform()
+                // v0.5.6 PiP fix: a resize that does NOT recreate the
+                // surface (PiP enter/exit on many devices, split
+                // screen) lands only here — the SW engine's native
+                // window kept the old fullscreen geometry and the
+                // small PiP window showed a dead picture. Re-attach
+                // so the engine re-windows to the new size
+                // (attachSurface also repaints the current frame).
+                if (swMode && (w != surfaceW || h != surfaceH)) {
+                    surfaceW = w; surfaceH = h
+                    runCatching { holder.surface?.let { swVideo?.attachSurface(it) } }
+                }
             }
 
             override fun surfaceDestroyed(holder: SurfaceHolder) {
                 surfaceReady = false
+                surfaceW = 0; surfaceH = 0
                 savePosition()
                 if (swMode) swVideo?.detachSurface()
                 runCatching { mp?.setSurface(null) }
@@ -3108,12 +3255,13 @@ class PlayerActivity : Activity() {
         sheetScrim.animate().cancel()
         sheetScrim.alpha = 0f
         sheetScrim.visibility = View.VISIBLE
-        sheetScrim.animate().alpha(1f).setDuration(200).start()
+        sheetScrim.animate().alpha(1f).setDuration(240)
+            .setInterpolator(DecelerateInterpolator()).start()
         sheetPanel.animate().cancel()
         sheetPanel.translationX = lp.width.toFloat()
         sheetPanel.visibility = View.VISIBLE
         sheetPanel.animate().translationX(0f).setDuration(300)
-            .setInterpolator(AccelerateDecelerateInterpolator()).start()
+            .setInterpolator(DecelerateInterpolator()).start()
         keepControls()
     }
 
@@ -3122,13 +3270,13 @@ class PlayerActivity : Activity() {
         sheetVisible = false
         sheetTag = ""
         val w = sheetPanel.width.takeIf { it > 0 } ?: sheetWidthPx()
-        sheetPanel.animate().translationX(w.toFloat()).setDuration(300)
-            .setInterpolator(AccelerateDecelerateInterpolator())
+        sheetPanel.animate().translationX(w.toFloat()).setDuration(280)
+            .setInterpolator(DecelerateInterpolator())
             .withEndAction {
                 if (!sheetVisible) sheetPanel.visibility = View.GONE
             }
             .start()
-        sheetScrim.animate().alpha(0f).setDuration(200)
+        sheetScrim.animate().alpha(0f).setDuration(240)
             .withEndAction {
                 if (!sheetVisible) sheetScrim.visibility = View.GONE
             }
@@ -3575,7 +3723,15 @@ class PlayerActivity : Activity() {
     class MxSeekBar(ctx: Context) : View(ctx) {
         var durationMs: Long = 0
         var positionMs: Long = 0
-            set(v) { field = v; if (!dragging) invalidate() }
+            set(v) {
+                // v0.5.7: the 100 ms tick sets this 10×/s, but on a
+                // long file the thumb often moves less than a pixel
+                // between ticks — only invalidate when the drawn
+                // position actually changes pixel-wise.
+                val oldPx = drawnPx(field)
+                field = v
+                if (!dragging && drawnPx(v) != oldPx) invalidate()
+            }
         var bufferedMs: Long = 0
             set(v) { field = v; invalidate() }
         var bookmarks: List<Long> = emptyList()
@@ -3607,6 +3763,14 @@ class PlayerActivity : Activity() {
         }
 
         private fun shownPos(): Long = if (dragging) dragPosMs else positionMs
+
+        /** Pixel x of a position on the current bar, -1 when it
+         *  cannot be computed yet (no width/duration) — callers
+         *  treat -1 as "changed" and invalidate. */
+        private fun drawnPx(pos: Long): Int {
+            if (width <= 0 || durationMs <= 0) return -1
+            return (width * (pos.coerceIn(0L, durationMs).toFloat() / durationMs)).toInt()
+        }
 
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
@@ -3859,8 +4023,24 @@ class PlayerActivity : Activity() {
             videoPlaying = try { player.isPlaying } catch (t: Throwable) { false },
             userSeeking = userSeeking
         )
+        // v0.5.6 smoothness: MediaPlayer's position poll quantises
+        // coarsely, so one 250 ms reading can report drift that is
+        // not real. A correction (seek or pause-hold) must sustain
+        // across two consecutive ticks before it acts — MX's native
+        // sync never chases poll noise. RESUME stays immediate:
+        // releasing a hold late is itself a stutter.
+        val effective = when (decision) {
+            AvSyncPolicy.Decision.HOLD, AvSyncPolicy.Decision.SEEK -> {
+                syncHoldStreak++
+                if (syncHoldStreak >= 2) decision else AvSyncPolicy.Decision.NONE
+            }
+            else -> {
+                syncHoldStreak = 0
+                decision
+            }
+        }
         try {
-            when (decision) {
+            when (effective) {
                 AvSyncPolicy.Decision.SEEK -> preciseSeek(player, target)
                 AvSyncPolicy.Decision.HOLD -> player.pause()
                 AvSyncPolicy.Decision.RESUME -> player.start()
@@ -3997,6 +4177,7 @@ class PlayerActivity : Activity() {
             else Fmt.msPadded(durationMs.toLong())
         refreshAspectButton()
         applyVideoTransform()
+        if (sv.frameDurMs > 0) applyContentFrameRate(1000f / sv.frameDurMs)
         prepared = true
 
         discoverSwSubtitles()
@@ -4119,6 +4300,45 @@ class PlayerActivity : Activity() {
         updateSubtitle()
     }
 
+    /** v0.5.6 smoothness: tell SurfaceFlinger the content frame
+     *  rate so it can pick a matching display rate (FIXED_SOURCE:
+     *  exact multiples only — 24 fps content on a 120 Hz panel is
+     *  presented at 120 Hz, never at an uneven rate). No-op below
+     *  API 30 or when the rate is unknown. */
+    private fun applyContentFrameRate(fps: Float) {
+        if (android.os.Build.VERSION.SDK_INT < 30) return
+        if (fps <= 0f || fps > 240f) return
+        val s = surface ?: return
+        runCatching {
+            s.setFrameRate(fps, android.view.Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE)
+        }
+    }
+
+    /** Content frame rate for the HW/HW+ paths, read from the
+     *  container's video track (MediaPlayer exposes no fps).
+     *  Pure I/O on the given path — safe to call off the UI thread
+     *  (v0.5.7 does exactly that from onPrepared). */
+    private fun probeContentFps(forPath: String): Float {
+        return runCatching {
+            val ex = android.media.MediaExtractor()
+            try {
+                ex.setDataSource(forPath)
+                for (i in 0 until ex.trackCount) {
+                    val f = ex.getTrackFormat(i)
+                    val mime = f.getString(android.media.MediaFormat.KEY_MIME) ?: continue
+                    if (mime.startsWith("video/") &&
+                        f.containsKey(android.media.MediaFormat.KEY_FRAME_RATE)) {
+                        return@runCatching f.getInteger(
+                            android.media.MediaFormat.KEY_FRAME_RATE).toFloat()
+                    }
+                }
+                0f
+            } finally {
+                ex.release()
+            }
+        }.getOrDefault(0f)
+    }
+
     private fun onPrepared(player: MediaPlayer) {
         prepared = true
         durationMs = try { player.duration } catch (t: Throwable) { 0 }
@@ -4133,6 +4353,20 @@ class PlayerActivity : Activity() {
             else Fmt.msPadded(durationMs.toLong())
         refreshAspectButton()
         applyVideoTransform()
+        // v0.5.7: the FPS probe opens the container with a
+        // MediaExtractor — real I/O that used to run synchronously
+        // on the UI thread inside onPrepared, stalling the first
+        // frames. Probe on a worker and apply when it lands (the
+        // frame-rate hint is an optimisation, never urgent).
+        val probePath = path
+        Thread {
+            val fps = probeContentFps(probePath)
+            if (fps > 0f) {
+                handler.post {
+                    if (prepared && path == probePath) applyContentFrameRate(fps)
+                }
+            }
+        }.start()
 
         // Engine session for HW+/SW (audio from our FFmpeg, video HW).
         val engineOk = startEngineSession()
@@ -4469,9 +4703,11 @@ class PlayerActivity : Activity() {
     // =================================================================
     private fun startTickers() {
         handler.removeCallbacks(progressRunnable)
+        handler.removeCallbacks(housekeepingRunnable)
         handler.removeCallbacks(saveRunnable)
         handler.removeCallbacks(syncRunnable)
         handler.post(progressRunnable)
+        handler.post(housekeepingRunnable)
         handler.post(saveRunnable)
         // §S4: the AvSyncPolicy ticker is HW+ staging only (it slaves
         // MediaPlayer video to the engine audio clock). In SW mode
@@ -4481,12 +4717,42 @@ class PlayerActivity : Activity() {
 
     private fun stopTickers() {
         handler.removeCallbacks(progressRunnable)
+        handler.removeCallbacks(housekeepingRunnable)
         handler.removeCallbacks(saveRunnable)
         handler.removeCallbacks(syncRunnable)
         handler.removeCallbacks(volumeRampRunnable)
     }
 
+    /** v0.5.7: the 100 ms UI tick — seekbar + time labels ONLY.
+     *  Labels are written only when their text actually changes
+     *  (they tick once a second; the loop runs ten times a
+     *  second), so most ticks cost one position read and one
+     *  small seekbar invalidate. */
     private fun updateProgress() {
+        if (!prepared || userSeeking) return
+        val pos = currentPos()
+        seekView.positionMs = pos
+        if (seekView.durationMs != durationMs.toLong()) {
+            seekView.durationMs = durationMs.toLong()
+        }
+        val cur = if (PSet.elapsedTime) Fmt.msPadded(pos) else ""
+        if (cur != lastCurTimeText) {
+            lastCurTimeText = cur
+            curTimeView.text = cur
+        }
+        val dur = if (PSet.showRemaining) "-" + Fmt.msPadded(durationMs - pos)
+            else Fmt.msPadded(durationMs.toLong())
+        if (dur != lastDurTimeText) {
+            lastDurTimeText = dur
+            durTimeView.text = dur
+        }
+    }
+
+    /** v0.5.7 housekeeping (250 ms): everything that used to ride
+     *  the 100 ms UI tick but is not the seekbar/labels — SW
+     *  completion polling, subtitle cue updates, A–B repeat
+     *  enforcement, external-audio reconciliation, sleep timer. */
+    private fun updateHousekeeping() {
         // SW completion: no MediaPlayer listener exists, so poll
         // both engine sessions — the file is over when the audio
         // has played out AND the video stream has drained.
@@ -4496,16 +4762,12 @@ class PlayerActivity : Activity() {
             onPlaybackComplete()
             return
         }
+        updateSubtitle()
         if (!prepared || userSeeking) {
             checkSleepTimer()
             return
         }
         val pos = currentPos()
-        seekView.positionMs = pos
-        seekView.durationMs = durationMs.toLong()
-        if (PSet.elapsedTime) curTimeView.text = Fmt.msPadded(pos) else curTimeView.text = ""
-        durTimeView.text = if (PSet.showRemaining) "-" + Fmt.msPadded(durationMs - pos)
-            else Fmt.msPadded(durationMs.toLong())
         // A–B repeat enforcement.
         ABRepeat.onPosition(pos)?.let { target ->
             seekTo(target)
@@ -4558,7 +4820,10 @@ class PlayerActivity : Activity() {
         val viewRatio = cw / ch
         var dispW: Float
         var dispH: Float
-        when (zoomMode) {
+        // v0.5.6 PiP fix: inside the PiP window the whole picture
+        // must fit (MX does the same) — the fullscreen crop/zoom
+        // would push most of the frame outside the small window.
+        when (if (inPip) "fit" else zoomMode) {
             "stretch" -> { dispW = cw; dispH = ch }
             "100" -> { dispW = videoW.toFloat(); dispH = videoH.toFloat() }
             "crop" -> {
@@ -4570,8 +4835,8 @@ class PlayerActivity : Activity() {
                 else { dispH = ch; dispW = ch * ratio }
             }
         }
-        dispW *= zoomScale
-        dispH *= zoomScale
+        dispW *= if (inPip) 1f else zoomScale
+        dispH *= if (inPip) 1f else zoomScale
         panX = ZoomMath.clampPan(panX, cw, dispW)
         panY = ZoomMath.clampPan(panY, ch, dispH)
         val lp = videoView.layoutParams as? FrameLayout.LayoutParams
@@ -4644,19 +4909,27 @@ class PlayerActivity : Activity() {
     // its receiver are removed from the player chrome; the
     // PSet.batteryClock key remains for the Settings screens.
 
-    /** Chrome fades in/out over 100 ms (§S5: MX's alpha_show /
-     *  alpha_hide pair) — the whole floating group (top bar + strip,
-     *  seek + transport) animates as one. */
+    /** Chrome glides in/out (v0.5.7: ~260 ms decelerate fade +
+     *  a 6dp settle from each edge — the v0.5.6 100 ms fades
+     *  snapped, which Sir read as "smooth animation missing").
+     *  Alpha + translationY only, so the animation rides the
+     *  hardware layer and never costs a layout pass. The whole
+     *  floating group (top bar + strip, seek + transport)
+     *  animates as one. */
     private fun showControls() {
         if (locked) return
         controlsVisible = true
-        for (chrome in listOf(topChrome, bottomChrome)) {
+        for ((i, chrome) in listOf(topChrome, bottomChrome).withIndex()) {
             chrome.animate().cancel()
             if (chrome.visibility != View.VISIBLE) {
                 chrome.alpha = 0f
+                chrome.translationY = if (i == 0) -dp(6).toFloat() else dp(6).toFloat()
                 chrome.visibility = View.VISIBLE
             }
-            chrome.animate().alpha(1f).setDuration(100).start()
+            chrome.animate().alpha(1f).translationY(0f)
+                .setDuration(CHROME_ANIM_MS)
+                .setInterpolator(DecelerateInterpolator())
+                .start()
         }
         // A fresh show always starts from the collapsed strip
         // (MX collapses it once the chrome has been away).
@@ -4666,18 +4939,23 @@ class PlayerActivity : Activity() {
 
     private fun hideControls(instant: Boolean = false) {
         controlsVisible = false
-        for (chrome in listOf(topChrome, bottomChrome)) {
+        for ((i, chrome) in listOf(topChrome, bottomChrome).withIndex()) {
             chrome.animate().cancel()
             if (instant) {
                 chrome.alpha = 0f
                 chrome.visibility = View.GONE
                 chrome.alpha = 1f
+                chrome.translationY = 0f
             } else {
-                chrome.animate().alpha(0f).setDuration(100)
+                chrome.animate().alpha(0f)
+                    .translationY(if (i == 0) -dp(6).toFloat() else dp(6).toFloat())
+                    .setDuration(CHROME_ANIM_MS)
+                    .setInterpolator(DecelerateInterpolator())
                     .withEndAction {
                         if (!controlsVisible) {
                             chrome.visibility = View.GONE
                             chrome.alpha = 1f
+                            chrome.translationY = 0f
                         }
                     }
                     .start()
@@ -4743,15 +5021,19 @@ class PlayerActivity : Activity() {
     )
 
     private fun openMenu() {
-        // §S5/P2: options menu animates at 100 ms (options_menu_in).
+        // v0.5.7: menu glides — scrim fades, panel fades + rises
+        // 8dp into place over ~240 ms (was a 100 ms pop).
         menuScrim.animate().cancel()
         menuScrim.alpha = 0f
         menuScrim.visibility = View.VISIBLE
-        menuScrim.animate().alpha(1f).setDuration(100).start()
+        menuScrim.animate().alpha(1f).setDuration(240)
+            .setInterpolator(DecelerateInterpolator()).start()
         menuPanel.animate().cancel()
         menuPanel.alpha = 0f
+        menuPanel.translationY = dp(8).toFloat()
         menuPanel.visibility = View.VISIBLE
-        menuPanel.animate().alpha(1f).setDuration(100).start()
+        menuPanel.animate().alpha(1f).translationY(0f).setDuration(240)
+            .setInterpolator(DecelerateInterpolator()).start()
         showMenuMain()
         keepControls()
     }
@@ -4761,14 +5043,17 @@ class PlayerActivity : Activity() {
             menuScrim.visibility = View.GONE
             return
         }
-        // §S5: options_menu_out, 100 ms.
-        menuPanel.animate().alpha(0f).setDuration(100)
+        // v0.5.7: menu glides out (fade + small fall, ~200 ms).
+        menuPanel.animate().alpha(0f).translationY(dp(8).toFloat()).setDuration(200)
+            .setInterpolator(DecelerateInterpolator())
             .withEndAction {
                 menuPanel.visibility = View.GONE
                 menuPanel.alpha = 1f
+                menuPanel.translationY = 0f
             }
             .start()
-        menuScrim.animate().alpha(0f).setDuration(100)
+        menuScrim.animate().alpha(0f).setDuration(200)
+            .setInterpolator(DecelerateInterpolator())
             .withEndAction {
                 menuScrim.visibility = View.GONE
                 menuScrim.alpha = 1f
@@ -5064,7 +5349,7 @@ class PlayerActivity : Activity() {
         })
         menuItemRow(MenuRow("About") {
             closeMenu()
-            infoDialog("About", "Shadow Player\nVersion 0.5.5\n\nA fully offline video player.")
+            infoDialog("About", "Shadow Player\nVersion 0.5.7\n\nA fully offline video player.")
         })
     }
 
@@ -5254,9 +5539,15 @@ class PlayerActivity : Activity() {
             setLayout(min(dp(568), (screenW * 0.92f).toInt()), WRAP)
             setDimAmount(0.5f)
         }
-        // §S5: dialog fade at MX's fast 100 ms class.
+        // v0.5.7: dialog glides in (~240 ms fade) and the window
+        // itself carries the shared dialog enter/exit animations.
+        runCatching {
+            dialog.window?.attributes?.windowAnimations =
+                R.style.ShadowPlayerDialogAnimations
+        }
         box.alpha = 0f
-        box.animate().alpha(1f).setDuration(100).start()
+        box.animate().alpha(1f).setDuration(240)
+            .setInterpolator(DecelerateInterpolator()).start()
         dialog.show()
     }
 
@@ -6118,15 +6409,66 @@ class PlayerActivity : Activity() {
         updateSubtitle()
     }
 
+    /** v0.5.7: identity of the cue currently rendered, so the
+     *  housekeeping loop only touches the subtitle TextView when
+     *  the cue actually changes — v0.5.6 re-set text + typeface
+     *  (a full text layout) on every 100 ms tick for the whole
+     *  duration of every cue. */
+    private var lastSubCueStart = Long.MIN_VALUE
+    private var lastSubCueEnd = Long.MIN_VALUE
+    private var lastSubCueText: String? = null
+
+    /** Binary search over the (start-sorted) cue list — the old
+     *  linear firstOrNull scan ran on every tick and grows with
+     *  file length. Falls back to the previous cue when cues
+     *  overlap: the last cue whose start is <= t wins, matching
+     *  the old scan's result for well-formed files. */
+    private fun cueAt(t: Long): Cue? {
+        if (cues.isEmpty()) return null
+        var lo = 0
+        var hi = cues.size - 1
+        var candidateIdx = -1
+        while (lo <= hi) {
+            val mid = (lo + hi) ushr 1
+            if (cues[mid].startMs <= t) {
+                candidateIdx = mid
+                lo = mid + 1
+            } else {
+                hi = mid - 1
+            }
+        }
+        if (candidateIdx < 0) return null
+        // Walk back a few entries so a long cue overlapped by
+        // short ones still resolves, like the old linear scan.
+        var i = candidateIdx
+        val floor = maxOf(0, candidateIdx - 4)
+        while (i >= floor) {
+            val c = cues[i]
+            if (t >= c.startMs && t < c.endMs) return c
+            i--
+        }
+        return null
+    }
+
     private fun updateSubtitle() {
         if (subCurrent.kind != 2) return
         val pos = currentPos()
         val baseSync = if (decoderMode == 1) PSet.subHwSyncMs else PSet.subDefaultSyncMs
         val t = PlayerLogic.subLookupMs(pos, PSet.subSpeed, baseSync + subSessionOffsetMs)
-        val cue = cues.firstOrNull { t >= it.startMs && t < it.endMs }
+        val cue = cueAt(t)
         if (cue == null) {
             if (subtitleView.visibility == View.VISIBLE) subtitleView.visibility = View.GONE
+            lastSubCueStart = Long.MIN_VALUE
+            lastSubCueEnd = Long.MIN_VALUE
+            lastSubCueText = null
         } else {
+            if (cue.startMs == lastSubCueStart && cue.endMs == lastSubCueEnd &&
+                cue.text == lastSubCueText && subtitleView.visibility == View.VISIBLE) {
+                return // same cue already on screen — no relayout
+            }
+            lastSubCueStart = cue.startMs
+            lastSubCueEnd = cue.endMs
+            lastSubCueText = cue.text
             subtitleView.text = styleCueText(cue.text)
             subtitleView.typeface = currentSubTypeface(
                 PSet.subItalicEffect && cue.text.trimStart().startsWith("/")
@@ -7143,19 +7485,55 @@ class PlayerActivity : Activity() {
             toast("Picture-in-Picture needs Android 8 or newer.")
             return
         }
+        // v0.5.7: arm the entry flag FIRST, before any framework
+        // call — onPause/onStop fire during the entry transition,
+        // before onPictureInPictureModeChanged, and they consult
+        // this flag so playback is never paused or released
+        // mid-entry. Cleared in onPictureInPictureModeChanged /
+        // onResume, and on every failure path below.
+        enteringPip = true
         try {
+            // v0.5.6 PiP fix: the framework throws for aspect ratios
+            // outside [0.41841, 2.39048] — clamp tall / ultra-wide
+            // files into range instead of failing the whole entry.
             val ratio = if (videoW > 0 && videoH > 0) {
-                android.util.Rational(videoW, videoH)
+                val r = videoW.toDouble() / videoH.toDouble()
+                when {
+                    r < 0.42 -> android.util.Rational(42, 100)
+                    r > 2.39 -> android.util.Rational(239, 100)
+                    else -> android.util.Rational(videoW, videoH)
+                }
             } else {
                 android.util.Rational(16, 9)
             }
-            val params = PictureInPictureParams.Builder()
+            val builder = PictureInPictureParams.Builder()
                 .setAspectRatio(ratio)
-                .build()
+            // Source rect hint: the system animates the PiP window
+            // from the video's real on-screen rect (MX passes the
+            // same hint; without it some OEM builds misplace the
+            // floating window).
+            runCatching {
+                val rect = android.graphics.Rect()
+                if (::videoView.isInitialized &&
+                    videoView.getGlobalVisibleRect(rect) && !rect.isEmpty
+                ) {
+                    builder.setSourceRectHint(rect)
+                }
+            }
+            if (Build.VERSION.SDK_INT >= 31) {
+                // Android 12+ seamless path: with auto-enter armed,
+                // the Home gesture glides straight into PiP when the
+                // background mode is PiP (our default, MX's too).
+                runCatching { builder.setAutoEnterEnabled(PSet.bgMode == "pip") }
+            }
+            val params = builder.build()
+            runCatching { setPictureInPictureParams(params) }
             if (!enterPictureInPictureMode(params)) {
+                enteringPip = false
                 toast("Picture-in-Picture is not available.")
             }
         } catch (t: Throwable) {
+            enteringPip = false
             // The manifest flag is Shadow One's surface; without it
             // the system refuses — say so, don't crash.
             toast("Picture-in-Picture is not available in this build.")
@@ -7488,10 +7866,24 @@ class PlayerActivity : Activity() {
     // =================================================================
     private fun togglePlaylistDrawer() {
         if (drawerPanel.visibility == View.VISIBLE) {
-            drawerPanel.visibility = View.GONE
+            // v0.5.7: glide out like the sheets (was an instant pop).
+            val w = drawerPanel.width.takeIf { it > 0 } ?: dp(300)
+            drawerPanel.animate().translationX(w.toFloat()).setDuration(240)
+                .setInterpolator(DecelerateInterpolator())
+                .withEndAction {
+                    if (drawerPanel.translationX != 0f) {
+                        drawerPanel.visibility = View.GONE
+                        drawerPanel.translationX = 0f
+                    }
+                }
+                .start()
         } else {
             populatePlaylistDrawer()
+            drawerPanel.animate().cancel()
+            drawerPanel.translationX = dp(300).toFloat()
             drawerPanel.visibility = View.VISIBLE
+            drawerPanel.animate().translationX(0f).setDuration(280)
+                .setInterpolator(DecelerateInterpolator()).start()
             keepControls()
         }
     }

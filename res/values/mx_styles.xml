@@ -118,4 +118,27 @@
         <item name="android:background">@android:color/transparent</item>
     </style>
 
+    <!-- v0.5.7 whole-UI motion: the application theme. Same Material
+         NoActionBar base the app always used, plus a window animation
+         style so EVERY activity transition (library <-> player <->
+         settings <-> surfaces, forward and back) glides instead of
+         cutting. Values are alpha/translation only. -->
+    <style name="ShadowPlayerTheme" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowAnimationStyle">@style/ShadowPlayerWindowAnimations</item>
+    </style>
+
+    <style name="ShadowPlayerWindowAnimations">
+        <item name="android:activityOpenEnterAnimation">@anim/activity_open_enter</item>
+        <item name="android:activityOpenExitAnimation">@anim/activity_open_exit</item>
+        <item name="android:activityCloseEnterAnimation">@anim/activity_close_enter</item>
+        <item name="android:activityCloseExitAnimation">@anim/activity_close_exit</item>
+    </style>
+
+    <!-- Window animations for code-built Dialog windows (the player
+         decoder dialog sets this on its window). -->
+    <style name="ShadowPlayerDialogAnimations">
+        <item name="android:windowEnterAnimation">@anim/dialog_enter</item>
+        <item name="android:windowExitAnimation">@anim/dialog_exit</item>
+    </style>
+
 </resources>

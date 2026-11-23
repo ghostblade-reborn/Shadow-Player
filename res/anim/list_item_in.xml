@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- v0.5.7: library rows cascade in — fade plus a short rise.
+     Alpha + translation only, so the cascade never costs layout. -->
+<set xmlns:android="http://schemas.android.com/apk/res/android"
+    android:interpolator="@android:anim/decelerate_interpolator">
+    <alpha android:fromAlpha="0.0" android:toAlpha="1.0"
+        android:duration="220" />
+    <translate android:fromXDelta="0" android:toXDelta="0"
+        android:fromYDelta="10%" android:toYDelta="0"
+        android:duration="220" />
+</set>
